@@ -1,4 +1,5 @@
 require('dotenv').config();
+const axios = require('axios');
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
@@ -11,6 +12,97 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
+// Ombre Brain 记忆系统
+const OMBRE_BRAIN_URL = process.env.OMBRE_BRAIN_URL || '';
+let ombreSessionId = null;
+let ombreCallId = 0;
+
+function parseSSEResponse(text) {
+    const lines = text.split('\n');
+    for (const line of lines) {
+        if (line.startsWith('data: ')) {
+            try { return JSON.parse(line.substring(6)); } catch (e) { }
+        }
+    }
+    try { return JSON.parse(text); } catch (e) { return null; }
+}
+
+async function initOmbreSession() {
+    try {
+        const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+            jsonrpc: "2.0",
+            method: "initialize",
+            params: {
+                protocolVersion: "2024-11-05",
+                capabilities: {},
+                clientInfo: { name: "forever-backend", version: "1.0" }
+            },
+            id: ++ombreCallId
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/event-stream'
+            }
+        });
+
+        ombreSessionId = response.headers['mcp-session-id'];
+
+        await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+            jsonrpc: "2.0",
+            method: "notifications/initialized"
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/event-stream',
+                'Mcp-Session-Id': ombreSessionId
+            }
+        });
+
+        console.log('Ombre Brain 连接成功 🧠');
+        return true;
+    } catch (err) {
+        console.error('Ombre Brain 连接失败:', err.message);
+        ombreSessionId = null;
+        return false;
+    }
+}
+
+async function callOmbreTool(toolName, args = {}) {
+    if (!OMBRE_BRAIN_URL) return null;
+    try {
+        if (!ombreSessionId) {
+            const ok = await initOmbreSession();
+            if (!ok) return null;
+        }
+
+        const response = await axios.post(`${OMBRE_BRAIN_URL}/mcp`, {
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: { name: toolName, arguments: args },
+            id: ++ombreCallId
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/event-stream',
+                'Mcp-Session-Id': ombreSessionId
+            },
+            transformResponse: [(data) => data]
+        });
+
+        const parsed = parseSSEResponse(response.data);
+        if (parsed && parsed.result && parsed.result.content) {
+            return parsed.result.content
+                .filter(c => c.type === 'text')
+                .map(c => c.text)
+                .join('\n');
+        }
+        return null;
+    } catch (err) {
+        console.error(`Ombre工具 ${toolName} 调用失败:`, err.message);
+        ombreSessionId = null;
+        return null;
+    }
+}
 
 // 健康检查
 app.get('/', (req, res) => {
