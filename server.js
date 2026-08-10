@@ -232,8 +232,7 @@ app.post('/sessions/:id/chat', async (req, res) => {
   });
 
   callOmbreTool('hold', {
-    content: `林刻雪说：${userContent}\n林小鱼回答：${reply}`,
-    emotion: { valence: 0.5, arousal: 0.5 }
+    content: `林刻雪说：${userContent}\n林小鱼回答：${reply}`
   }).catch(() => {});
 
   await supabase
